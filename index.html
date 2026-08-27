@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Industrial Field Task List - Shared Ops</title>
+
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="Industrial Field Task List - Shared Ops">
+    <meta property="og:description" content="Live multi-user collaborative operations checklist and task tracker.">
+    <meta property="og:image" content="./IMG_3847.jpeg">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="./IMG_3847.jpeg">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .mono-font { font-family: 'Share Tech Mono', monospace; }
+        .completed-task { opacity: 0.4; text-decoration: line-through; }
+        
+        input[type=range] {
+            height: 12px;
+            border-radius: 4px;
+            appearance: none;
+            background: #27272a;
+            border: 1px solid #52525b;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            appearance: none;
+            width: 36px;
+            height: 28px;
+            border-radius: 4px;
+            background: #0ea5e9;
+            cursor: pointer;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 2px 6px rgba(0,0,0,0.6);
+            border: 1px solid #0284c7;
+        }
+
+        input[type=checkbox] {
+            appearance: none;
+            background-color: #09090b;
+            border: 1.5px solid #71717a;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            display: grid;
+            place-content: center;
+            transition: all 0.2s ease;
+        }
+        input[type=checkbox]::before {
+            content: "";
+            width: 0.65rem;
+            height: 0.65rem;
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            box-shadow: inset 1em 1em #22c55e;
+            transform-origin: center;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
+        input[type=checkbox]:checked {
+            background-color: #052e16;
+            border-color: #22c55e;
+        }
+        input[type=checkbox]:checked::before {
+            transform: scale(1);
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen pb-20 antialiased selection:bg-cyan-500 selection:text-white" onclick="closeAllDropdowns(event)">
+
+    <!-- Username Modal Overlay -->
+    <div id="user-modal" class="fixed inset-0 bg-zinc-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div class="bg-zinc-900 border border-zinc-700 p-6 rounded-xl max-w-sm w-full shadow-2xl space-y-4">
+            <div class="space-y-1">
+                <span class="text-[10px] mono-font uppercase tracking-widest bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded border border-cyan-500/40 font-bold">IDENTIFICATION REQUIRED</span>
+                <h2 class="text-xl font-bold font-mono tracking-tight text-white mt-2">Enter Operator Alias</h2>
+                <p class="text-xs text-zinc-400">Your callsign will be recorded alongside task updates for all crew members.</p>
+            </div>
+            <form onsubmit="setOperatorAlias(event)" class="space-y-3">
+                <input type="text" id="alias-input" placeholder="e.g., Lead Tech - Marcus" required maxlength="25"
+                    class="w-full px-4 py-3 rounded border border-zinc-700 text-sm focus:outline-none focus:border-cyan-500 bg-zinc-950 text-zinc-100 placeholder-zinc-600 font-mono">
+                <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-mono uppercase font-bold py-3 rounded text-xs transition shadow-lg active:scale-95">Initialize Connection</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-zinc-900 text-zinc-100 pt-6 pb-8 px-5 border-b-4 border-cyan-500 shadow-2xl relative overflow-hidden">
+        <div id="header-watermark-tl" class="absolute left-2 -top-2 opacity-20 font-bold text-[7rem] leading-none mono-font pointer-events-none select-none text-zinc-600 tracking-tighter transition-all duration-300 z-0">0%</div>
+        <div id="header-watermark-br" class="absolute -right-6 -bottom-10 opacity-15 font-bold text-[11rem] leading-none mono-font pointer-events-none select-none text-cyan-400 tracking-tighter transition-all duration-300 z-0">0%</div>
+
+        <div class="max-w-md mx-auto relative z-10">
+            <div class="flex justify-between items-center mb-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-[9px] mono-font uppercase tracking-widest bg-zinc-800/90 backdrop-blur text-zinc-300 px-2 py-0.5 rounded border border-zinc-700">USER: <span id="current-user-display" class="text-cyan-400 font-bold">---</span></span>
+                    <button onclick="promptChangeUser()" class="text-[9px] mono-font uppercase bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white px-2 py-0.5 rounded border border-zinc-700">Switch</button>
+                </div>
+                <div class="flex gap-2">
+                    <a href="./schedule.html" class="text-xs font-mono uppercase bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded transition shadow-sm font-semibold">Scheduler &rarr;</a>
+                    <button onclick="resetTasks()" class="text-xs font-mono uppercase bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded transition border border-zinc-600 active:scale-95 shadow-sm font-semibold">Reset</button>
+                </div>
+            </div>
+
+            <div class="flex justify-between items-center mb-4">
+                <div>
+                    <span class="text-[11px] mono-font uppercase tracking-wider bg-cyan-500/20 backdrop-blur text-cyan-300 px-2.5 py-1 rounded font-bold border border-cyan-500/40">LIVE SHARED GRID</span>
+                    <h1 class="text-2xl font-bold mt-2 tracking-tight uppercase font-mono text-white">Job Site Checklist</h1>
+                </div>
+            </div>
+            
+            <div class="mt-6 bg-zinc-950 p-4 rounded-lg border border-zinc-700/80 shadow-inner">
+                <div class="flex justify-between text-xs mb-2 font-mono uppercase tracking-wider font-semibold">
+                    <span id="progress-text" class="text-zinc-300">0 of 0 completed</span>
+                    <span id="progress-percent" class="text-cyan-400 font-bold">0%</span>
+                </div>
+                <div class="w-full bg-zinc-900 h-3 rounded-sm overflow-hidden p-0.5 border border-zinc-700">
+                    <div id="progress-bar" class="bg-cyan-500 h-full rounded-sm transition-all duration-300 w-0 shadow-[0_0_10px_rgba(6,182,212,0.6)]"></div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-md mx-auto px-4 mt-6 space-y-4">
+        <!-- Search Bar -->
+        <div class="relative">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-zinc-400 font-mono text-xs">🔍</span>
+            <input type="text" id="search-input" placeholder="Search tasks, notes, or operators..." oninput="handleSearch(this.value)"
+                class="w-full pl-10 pr-4 py-3 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-cyan-500 font-medium shadow-sm transition">
+        </div>
+
+        <!-- Filter & Sort Bubbles -->
+        <div class="grid grid-cols-2 gap-2.5">
+            <div class="relative">
+                <button onclick="toggleDropdown('filter', event)" class="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 px-3 py-2.5 rounded-full flex items-center justify-between text-xs font-mono uppercase tracking-wider text-zinc-300 transition shadow-sm">
+                    <div class="flex items-center gap-1.5 truncate">
+                        <span class="text-cyan-400 font-bold">FILTER:</span>
+                        <span id="current-filter-label" class="text-white font-semibold truncate">All Ops</span>
+                    </div>
+                    <svg id="filter-chevron" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+                <div id="filter-dropdown-menu" class="hidden absolute left-0 right-0 mt-1.5 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-40 overflow-hidden font-mono text-xs uppercase divide-y divide-zinc-800">
+                    <button onclick="selectFilterOption('all', 'All Ops')" class="w-full text-left px-4 py-3 hover:bg-zinc-800 flex items-center justify-between text-zinc-300 hover:text-white transition">
+                        <span>All Ops</span>
+                        <span class="filter-check-all text-cyan-400 font-bold">✓</span>
+                    </button>
+                    <button onclick="selectFilterOption('active', 'Pending')" class="w-full text-left px-4 py-3 hover:bg-zinc-800 flex items-center justify-between text-zinc-300 hover:text-white transition">
+                        <span>Pending</span>
+                        <span class="filter-check-active text-cyan-400 font-bold hidden">✓</span>
+                    </button>
+                    <button onclick="selectFilterOption('completed', 'Done')" class="w-full text-left px-4 py-3 hover:bg-zinc-800 flex items-center justify-between text-zinc-300 hover:text-white transition">
+                        <span>Done</span>
+                        <span class="filter-check-completed text-cyan-400 font-bold hidden">✓</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="relative">
+                <button onclick="toggleDropdown('sort', event)" class="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 px-3 py-2.5 rounded-full flex items-center justify-between text-xs font-mono uppercase tracking-wider text-zinc-300 transition shadow-sm">
+                    <div class="flex items-center gap-1.5 truncate">
+                        <span class="text-cyan-400 font-bold">SORT:</span>
+                        <span id="current-sort-label" class="text-white font-semibold truncate">Default</span>
+                    </div>
+                    <svg id="sort-chevron" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+                <div id="sort-dropdown-menu" class="hidden absolute left-0 right-0 mt-1.5 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-40 overflow-hidden font-mono text-xs uppercase divide-y divide-zinc-800">
+                    <button onclick="selectSortOption('default', 'Default')" class="w-full text-left px-4 py-3 hover:bg-zinc-800 flex items-center justify-between text-zinc-300 hover:text-white transition">
+                        <span>Default</span>
+                        <span class="sort-check-default text-cyan-400 font-bold">✓</span>
+                    </button>
+                    <button onclick="selectSortOption('alpha-asc', 'A - Z')" class="w-full text-left px-4 py-3 hover:bg-zinc-800 flex items-center justify-between text-zinc-300 hover:text-white transition">
+                        <span>A - Z</span>
+                        <span class="sort-check-alpha-asc text-cyan-400 font-bold hidden">✓</span>
+                    </button>
+                    <button onclick="selectSortOption('alpha-desc', 'Z - A')" class="w-full text-left px-4 py-3 hover:bg-zinc-800 flex items-center justify-between text-zinc-300 hover:text-white transition">
+                        <span>Z - A</span>
+                        <span class="sort-check-alpha-desc text-cyan-400 font-bold hidden">✓</span>
+                    </button>
+                    <button onclick="selectSortOption('category', 'Category')" class="w-full text-left px-4 py-3 hover:bg-zinc-800 flex items-center justify-between text-zinc-300 hover:text-white transition">
+                        <span>Category</span>
+                        <span class="sort-check-category text-cyan-400 font-bold hidden">✓</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Task List Container -->
+        <div id="task-list" class="space-y-3.5"></div>
+
+        <!-- Add Task Form -->
+        <div class="mt-8 bg-zinc-900 p-5 rounded-lg border border-zinc-700 shadow-lg">
+            <h3 class="text-xs font-mono uppercase tracking-wider text-zinc-200 mb-3 flex items-center gap-2 font-bold">
+                <span class="text-cyan-400">[+]</span> Add Custom Directive
+            </h3>
+            <form onsubmit="addNewTask(event)" class="space-y-3">
+                <input type="text" id="new-task-title" placeholder="e.g., Secure perimeter gate" required
+                    class="w-full px-4 py-3 rounded border border-zinc-700 text-sm focus:outline-none focus:border-cyan-500 bg-zinc-950 text-zinc-100 placeholder-zinc-500 font-medium">
+                <div class="flex gap-2">
+                    <select id="new-task-category" class="flex-1 px-3 py-2.5 rounded border border-zinc-700 text-xs font-mono uppercase bg-zinc-950 text-zinc-200 font-semibold focus:outline-none focus:border-cyan-500">
+                        <option value="Indoor">Indoor</option>
+                        <option value="Garage">Garage</option>
+                        <option value="Yard & Outdoor">Yard & Outdoor</option>
+                        <option value="Pool & Patio">Pool & Patio</option>
+                    </select>
+                    <button type="submit" class="bg-cyan-600 hover:bg-cyan-500 text-white font-mono uppercase font-bold px-5 py-2.5 rounded text-xs transition shadow active:scale-95">Commit</button>
+                </div>
+            </form>
+        </div>
+    </main>
+
+    <!-- Script Logic -->
+    <script>
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "AIzaSyDummyKeyForGitHubPagesFallback",
+            authDomain: "shared-checklist-app.firebaseapp.com",
+            projectId: "shared-checklist-app",
+            storageBucket: "shared-checklist-app.appspot.com",
+            messagingSenderId: "000000000000",
+            appId: "1:0000:web:0000"
+        };
+        const appId = 'industrial-field-shared-master-ops';
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        let currentFilter = 'all';
+        let currentSort = 'default';
+        let searchQuery = '';
+        let currentUser = localStorage.getItem('field_task_operator_name') || '';
+        let appState = { tasks: [], reservations: {} };
+
+        const defaultTasks = [
+            { id: 1, title: "Fix living room curtain rod & brackets", category: "Indoor", completed: false, notes: "Secure loose anchor screws and check tension.", updatedBy: "System" },
+            { id: 2, title: "Clean and rearrange garage", category: "Garage", completed: false, notes: "Sort bins, sweep floor, create clear walkways.", updatedBy: "System" },
+            { id: 3, title: "Install tool & rake holder on garage wall", category: "Garage", completed: false, notes: "Find stud with stud finder before mounting rack.", updatedBy: "System" },
+            { id: 4, title: "Repair and check leaking garden hose", category: "Yard & Outdoor", completed: false, notes: "Inspect fittings, replace worn rubber washers, and check for kinks.", updatedBy: "System" },
+            { id: 5, title: "Acquire 10 bags of mulch from Home Depot", category: "Yard & Outdoor", type: "counter", current: 0, target: 10, completed: false, notes: "Tap buttons to track payload units (0/10)", updatedBy: "System" },
+            { id: 6, title: "Pick up stone from Home Depot", category: "Yard & Outdoor", completed: false, notes: "Verify quantities and stone grade prior to dispatch.", updatedBy: "System" },
+            { id: 7, title: "Spread mulch in garden beds", category: "Yard & Outdoor", type: "slider", progress: 0, completed: false, notes: "Adjust slider to 100% to finalize spreading operation.", updatedBy: "System" },
+            { id: 8, title: "Lay down stone / gravel", category: "Yard & Outdoor", completed: false, notes: "Spread evenly over weed barrier fabric.", updatedBy: "System" },
+            { id: 9, title: "Touch up white paint around pool area", category: "Pool & Patio", completed: false, notes: "Scrape flaky areas, prime, and apply weather-resistant white paint.", updatedBy: "System" },
+            { id: 10, title: "Cut down palm limbs in backyard", category: "Yard & Outdoor", completed: false, notes: "Wear PPE gear, trim close to trunk safely.", updatedBy: "System" },
+            { id: 11, title: "Clean and degrease BBQ grill", category: "Yard & Outdoor", completed: false, notes: "Soak grates in warm soapy water, scrub burners.", updatedBy: "System" },
+            { id: 12, title: "Touch up nicks and scuffs on indoor walls", category: "Indoor", completed: false, notes: "Use matching wall paint sample and small artist brush.", updatedBy: "System" }
+        ];
+
+        auth.signInAnonymously().then(() => {
+            initRealtimeSync();
+        }).catch((err) => {
+            console.error("Auth error:", err);
+            initRealtimeSync();
+        });
+
+        function checkUserAlias() {
+            const modal = document.getElementById('user-modal');
+            const display = document.getElementById('current-user-display');
+            if (!currentUser || currentUser.trim() === '') {
+                modal.style.display = 'flex';
+            } else {
+                modal.style.display = 'none';
+                display.innerText = currentUser;
+            }
+        }
+
+        function setOperatorAlias(e) {
+            e.preventDefault();
+            const inputVal = document.getElementById('alias-input').value.trim();
+            if (inputVal) {
+                currentUser = inputVal;
+                localStorage.setItem('field_task_operator_name', currentUser);
+                checkUserAlias();
+            }
+        }
+
+        function promptChangeUser() {
+            const newAlias = prompt("Enter new operator callsign:", currentUser);
+            if (newAlias && newAlias.trim() !== '') {
+                currentUser = newAlias.trim();
+                localStorage.setItem('field_task_operator_name', currentUser);
+                checkUserAlias();
+            }
+        }
+
+        const docRef = db.collection('artifacts').doc(appId).collection('public').doc('master_state');
+
+        function initRealtimeSync() {
+            docRef.onSnapshot((docSnapshot) => {
+                if (docSnapshot.exists && docSnapshot.data().tasks) {
+                    let cloudTasks = docSnapshot.data().tasks;
+                    defaultTasks.forEach(defTask => {
+                        const existing = cloudTasks.find(t => t.id === defTask.id || t.title.toLowerCase() === defTask.title.toLowerCase());
+                        if (!existing) {
+                            cloudTasks.push(defTask);
+                        }
+                    });
+                    appState.tasks = cloudTasks;
+                    appState.reservations = docSnapshot.data().reservations || {};
+                    docRef.set({ tasks: appState.tasks, reservations: appState.reservations }, { merge: true }).catch(() => {});
+                } else {
+                    appState.tasks = defaultTasks;
+                    appState.reservations = {};
+                    docRef.set({ tasks: defaultTasks, reservations: {} }).catch(err => console.error(err));
+                }
+                renderTasks();
+            }, (error) => {
+                console.error("Firestore snapshot error:", error);
+                appState.tasks = defaultTasks;
+                renderTasks();
+            });
+        }
+
+        function saveToCloud() {
+            docRef.set({ tasks: appState.tasks, reservations: appState.reservations }, { merge: true }).catch((err) => {
+                console.error("Cloud save error:", err);
+            });
+        }
+
+        function toggleTask(id) {
+            if (!currentUser) { promptChangeUser(); return; }
+            appState.tasks = appState.tasks.map(t => (t.id === id && !t.type) ? { ...t, completed: !t.completed, updatedBy: currentUser } : t);
+            saveToCloud();
+        }
+
+        function updateCounter(id, delta) {
+            if (!currentUser) { promptChangeUser(); return; }
+            appState.tasks = appState.tasks.map(t => {
+                if (t.id === id && t.type === 'counter') {
+                    const newCurrent = Math.max(0, Math.min(t.target, t.current + delta));
+                    return { ...t, current: newCurrent, completed: newCurrent >= t.target, notes: `Tracked payload units (${newCurrent}/${t.target})`, updatedBy: currentUser };
+                }
+                return t;
+            });
+            saveToCloud();
+        }
+
+        function updateSlider(id, val) {
+            const progressVal = parseInt(val, 10);
+            const valSpan = document.getElementById(`slider-val-${id}`);
+            if (valSpan) valSpan.innerText = `${progressVal}%`;
+            appState.tasks = appState.tasks.map(t => (t.id === id && t.type === 'slider') ? { ...t, progress: progressVal, completed: progressVal >= 100, updatedBy: currentUser || 'Anonymous' } : t);
+            renderProgressBarOnly();
+        }
+
+        function finalizeSlider() {
+            if (!currentUser) { promptChangeUser(); return; }
+            saveToCloud();
+        }
+
+        function deleteTask(id) {
+            if (!currentUser) { promptChangeUser(); return; }
+            if (confirm("Remove this operational directive from the shared database?")) {
+                appState.tasks = appState.tasks.filter(t => t.id !== id);
+                saveToCloud();
+            }
+        }
+
+        function addNewTask(e) {
+            e.preventDefault();
+            if (!currentUser) { promptChangeUser(); return; }
+            const titleInput = document.getElementById('new-task-title');
+            const catInput = document.getElementById('new-task-category');
+            appState.tasks.push({
+                id: Date.now(),
+                title: titleInput.value.trim(),
+                category: catInput.value,
+                completed: false,
+                notes: `Custom directive created by ${currentUser}.`,
+                updatedBy: currentUser
+            });
+            titleInput.value = '';
+            saveToCloud();
+        }
+
+        function resetTasks() {
+            if (!currentUser) { promptChangeUser(); return; }
+            if (confirm("Reset all tasks and completion states to default specifications for all users?")) {
+                appState.tasks = JSON.parse(JSON.stringify(defaultTasks));
+                appState.tasks.forEach(t => t.updatedBy = currentUser);
+                saveToCloud();
+            }
+        }
+
+        function handleSearch(query) {
+            searchQuery = query.toLowerCase().trim();
+            renderTasks();
+        }
+
+        function toggleDropdown(type, e) {
+            e.stopPropagation();
+            const filterMenu = document.getElementById('filter-dropdown-menu');
+            const sortMenu = document.getElementById('sort-dropdown-menu');
+            const filterChevron = document.getElementById('filter-chevron');
+            const sortChevron = document.getElementById('sort-chevron');
+
+            if (type === 'filter') {
+                const isHidden = filterMenu.classList.contains('hidden');
+                sortMenu.classList.add('hidden');
+                sortChevron.style.transform = 'rotate(0deg)';
+                if (isHidden) { filterMenu.classList.remove('hidden'); filterChevron.style.transform = 'rotate(180deg)'; }
+                else { filterMenu.classList.add('hidden'); filterChevron.style.transform = 'rotate(0deg)'; }
+            } else if (type === 'sort') {
+                const isHidden = sortMenu.classList.contains('hidden');
+                filterMenu.classList.add('hidden');
+                filterChevron.style.transform = 'rotate(0deg)';
+                if (isHidden) { sortMenu.classList.remove('hidden'); sortChevron.style.transform = 'rotate(180deg)'; }
+                else { sortMenu.classList.add('hidden'); sortChevron.style.transform = 'rotate(0deg)'; }
+            }
+        }
+
+        function closeAllDropdowns(e) {
+            const filterMenu = document.getElementById('filter-dropdown-menu');
+            const sortMenu = document.getElementById('sort-dropdown-menu');
+            if (filterMenu) filterMenu.classList.add('hidden');
+            if (sortMenu) sortMenu.classList.add('hidden');
+        }
+
+        function selectFilterOption(filterKey, labelText) {
+            currentFilter = filterKey;
+            document.getElementById('current-filter-label').innerText = labelText;
+            ['all', 'active', 'completed'].forEach(k => {
+                const checkEl = document.querySelector(`.filter-check-${k}`);
+                if (checkEl) { if (k === filterKey) checkEl.classList.remove('hidden'); else checkEl.classList.add('hidden'); }
+            });
+            renderTasks();
+        }
+
+        function selectSortOption(sortKey, labelText) {
+            currentSort = sortKey;
+            document.getElementById('current-sort-label').innerText = labelText;
+            ['default', 'alpha-asc', 'alpha-desc', 'category'].forEach(k => {
+                const checkEl = document.querySelector(`.sort-check-${k}`);
+                if (checkEl) { if (k === sortKey) checkEl.classList.remove('hidden'); else checkEl.classList.add('hidden'); }
+            });
+            renderTasks();
+        }
+
+        function getCategoryBadge(category) {
+            const colors = {
+                'Indoor': 'bg-purple-950 text-purple-200 border border-purple-700/60 font-semibold',
+                'Garage': 'bg-amber-950 text-amber-200 border border-amber-700/60 font-semibold',
+                'Yard & Outdoor': 'bg-emerald-950 text-emerald-200 border border-emerald-700/60 font-semibold',
+                'Pool & Patio': 'bg-cyan-950 text-cyan-200 border border-cyan-700/60 font-semibold'
+            };
+            return colors[category] || 'bg-zinc-800 text-zinc-200';
+        }
+
+        function calculateCompletedEquivalent() {
+            let totalScore = 0;
+            appState.tasks.forEach(t => {
+                if (t.completed) totalScore += 1;
+                else if (t.type === 'slider' && t.progress > 0) totalScore += (t.progress / 100);
+            });
+            return totalScore;
+        }
+
+        function updateProgressBarOnly() {
+            const totalCount = appState.tasks.length;
+            const completedEquivalent = calculateCompletedEquivalent();
+            const percent = totalCount > 0 ? Math.round((completedEquivalent / totalCount) * 100) : 0;
+            const formattedCompleted = Number.isInteger(completedEquivalent) ? completedEquivalent : completedEquivalent.toFixed(1);
+
+            document.getElementById('progress-text').innerText = `${formattedCompleted} of ${totalCount} completed`;
+            document.getElementById('progress-percent').innerText = `${percent}%`;
+            document.getElementById('progress-bar').style.width = `${percent}%`;
+
+            const watermarkTL = document.getElementById('header-watermark-tl');
+            const watermarkBR = document.getElementById('header-watermark-br');
+            if (watermarkTL) watermarkTL.innerText = `${percent}%`;
+            if (watermarkBR) watermarkBR.innerText = `${percent}%`;
+        }
+
+        function renderTasks() {
+            checkUserAlias();
+            const container = document.getElementById('task-list');
+            let filtered = appState.tasks.filter(t => {
+                if (currentFilter === 'active') return !t.completed;
+                if (currentFilter === 'completed') return t.completed;
+                return true;
+            });
+
+            if (searchQuery !== '') {
+                filtered = filtered.filter(t => 
+                    t.title.toLowerCase().includes(searchQuery) ||
+                    (t.notes && t.notes.toLowerCase().includes(searchQuery)) ||
+                    t.category.toLowerCase().includes(searchQuery) ||
+                    (t.updatedBy && t.updatedBy.toLowerCase().includes(searchQuery))
+                );
+            }
+
+            filtered.sort((a, b) => {
+                if (a.completed !== b.completed) return a.completed ? 1 : -1;
+                if (currentSort === 'alpha-asc') return a.title.localeCompare(b.title);
+                if (currentSort === 'alpha-desc') return b.title.localeCompare(a.title);
+                if (currentSort === 'category' && a.category !== b.category) return a.category.localeCompare(b.category);
+                return 0;
+            });
+
+            updateProgressBarOnly();
+
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="text-center py-10 bg-zinc-900 rounded-lg border border-zinc-700"><p class="text-zinc-400 text-xs font-mono uppercase tracking-wider font-semibold">No matching active logs</p></div>`;
+                return;
+            }
+
+            container.innerHTML = filtered.map(t => {
+                let interactiveElement = '';
+                if (t.type === 'counter') {
+                    interactiveElement = `
+                        <div class="mt-3.5 bg-zinc-950 p-3.5 rounded border border-zinc-700">
+                            <div class="flex justify-between items-center mb-2.5">
+                                <span class="text-xs font-mono text-zinc-300 font-semibold">UNITS LOADED: <span class="text-cyan-400 font-bold text-sm">${t.current}</span> / ${t.target}</span>
+                                <div class="flex gap-2">
+                                    <button onclick="updateCounter(${t.id}, -1)" class="w-11 h-11 bg-zinc-900 border border-zinc-600 rounded text-zinc-100 font-mono font-bold text-lg flex items-center justify-center active:bg-zinc-800 shadow-sm transition">-</button>
+                                    <button onclick="updateCounter(${t.id}, 1)" class="w-11 h-11 bg-cyan-600 text-white rounded font-mono font-bold text-lg flex items-center justify-center active:bg-cyan-500 shadow-sm transition">+</button>
+                                </div>
+                            </div>
+                            <div class="flex gap-1.5 mt-2">
+                                ${Array.from({length: t.target}, (_, i) => `<div class="h-3 flex-1 rounded-xs ${i < t.current ? 'bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.6)]' : 'bg-zinc-800 border border-zinc-700'} transition-all"></div>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                } else if (t.type === 'slider') {
+                    interactiveElement = `
+                        <div class="mt-3.5 bg-zinc-950 p-3.5 rounded border border-zinc-700">
+                            <div class="flex justify-between items-center mb-2.5 text-xs font-mono">
+                                <span class="text-zinc-300 font-semibold uppercase">Operation Progress</span>
+                                <span id="slider-val-${t.id}" class="text-cyan-400 font-bold text-sm">${t.progress}%</span>
+                            </div>
+                            <input type="range" min="0" max="100" value="${t.progress}" oninput="updateSlider(${t.id}, this.value)" ontouchend="finalizeSlider()" onmouseup="finalizeSlider()" class="w-full cursor-pointer py-2">
+                        </div>
+                    `;
+                }
+
+                const isChecked = t.completed ? 'checked' : '';
+                const checkboxOrIndicator = t.type 
+                    ? `<div class="mt-1 h-7 w-7 rounded flex items-center justify-center text-xs font-mono font-bold ${t.completed ? 'bg-emerald-600 text-white shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-zinc-950 text-zinc-400 border border-zinc-600'}">${t.completed ? '✓' : '•'}</div>`
+                    : `<input type="checkbox" ${isChecked} onclick="toggleTask(${t.id})" class="mt-1 h-7 w-7 cursor-pointer">`;
+
+                const updatedByBadge = t.updatedBy ? `<span class="text-[10px] font-mono text-zinc-400 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">Op: ${t.updatedBy}</span>` : '';
+
+                return `
+                    <div class="bg-zinc-900 p-4 rounded-lg border border-zinc-700 shadow-md flex items-start gap-3.5 transition">
+                        ${checkboxOrIndicator}
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="text-[10px] font-mono uppercase font-bold px-2 py-0.5 rounded ${getCategoryBadge(t.category)}">${t.category}</span>
+                                    ${updatedByBadge}
+                                </div>
+                                <button onclick="deleteTask(${t.id})" class="text-zinc-400 hover:text-red-400 font-mono text-lg px-2.5 py-0.5 font-bold">&times;</button>
+                            </div>
+                            <h4 class="text-sm font-medium mt-2 leading-relaxed break-words ${t.completed ? 'completed-task text-zinc-500' : 'text-zinc-100 font-semibold'}">${t.title}</h4>
+                            ${t.notes ? `<p class="text-xs font-mono text-zinc-300 mt-1.5 leading-normal break-words">${t.notes}</p>` : ''}
+                            ${interactiveElement}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+    </script>
+</body>
+</html>
